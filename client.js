@@ -76,44 +76,78 @@ window.__ModuleLoader__.load({
       return data;
     }
 
-    /* ---------------- 模型选择器：倍率放行尾右对齐 ----------------
-     * DSH 的模型行是「名字 + 右侧对勾」，没有额外的右侧栏位；名字由提供方目录决定。
-     * 这里用 CSS 给 wb-work 的行加一个 ::after，把倍率推到名字末端（对勾之前），
-     * 这样目录名里不用再带一份 «0.65x»。选择器自带的「1017」标签等不受影响。
+    /* ------------------ 模型选择器：倍率在弹窗行尾靠右显示 ------------------
+     * DSH 的模型行是「名字 + 右侧对勾」，中间没有额外栏位，目录名里也不带倍率。
+     * 官方给这个位置留了插槽 conversation.input.model.label：placement 为
+     * 'option' 时就是弹窗里的模型行，'trigger' 是输入框上的模型按钮，'menu' 是
+     * 根菜单里的当前值。这里注册一个标签组件：名字靠左、倍率用 margin-left:auto
+     * 顶到行尾（对勾之前）；倍率来自宿主的 /catalog，按模型 id 缓存后渲染。
      */
-    const MULTIPLIER_STYLE_ID = 'dhs-wb-work-model-multiplier';
-    const MULTIPLIER_BASE_CSS = [
-      '[data-provider-id="wb-work"][data-model-id]{display:flex;align-items:center;gap:8px;width:100%;min-width:0;white-space:nowrap}',
-      '[data-provider-id="wb-work"][data-model-id]::after{margin-left:auto;flex:0 0 auto;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1}',
-    ].join('');
+    const MULTIPLIERS = new Map();
+    const MULTIPLIER_LISTENERS = new Set();
+    let multiplierLoading = false;
 
-    function multiplierCss(models) {
-      const rules = [MULTIPLIER_BASE_CSS];
+    function publishMultipliers(models) {
+      const next = new Map();
       for (const model of Array.isArray(models) ? models : []) {
-        if (!model || typeof model.id !== 'string' || typeof model.multiplier !== 'number' || !Number.isFinite(model.multiplier)) continue;
-        const id = model.id.replace(/["\\]/g, '');
-        if (id === '') continue;
-        rules.push(`[data-provider-id="wb-work"][data-model-id="${id}"]::after{content:"${model.multiplier.toFixed(2)}x"}`);
+        if (!model || typeof model.id !== 'string' || model.id === '') continue;
+        if (typeof model.multiplier !== 'number' || !Number.isFinite(model.multiplier)) continue;
+        next.set(model.id, model.multiplier);
       }
-      return rules.join('\n');
+      MULTIPLIERS.clear();
+      for (const [id, value] of next) MULTIPLIERS.set(id, value);
+      for (const listener of MULTIPLIER_LISTENERS) {
+        try { listener(); } catch { /* 单个订阅者出错不影响其它行 */ }
+      }
     }
 
-    function installMultiplierStyles(models) {
-      if (typeof document === 'undefined' || !document.head) return;
-      let tag = document.getElementById(MULTIPLIER_STYLE_ID);
-      if (!tag) {
-        tag = document.createElement('style');
-        tag.id = MULTIPLIER_STYLE_ID;
-        tag.dataset.plugin = 'dhs-wb-work';
-        document.head.appendChild(tag);
-      }
-      tag.textContent = multiplierCss(models);
+    function subscribeMultipliers(listener) {
+      MULTIPLIER_LISTENERS.add(listener);
+      return () => { MULTIPLIER_LISTENERS.delete(listener); };
     }
 
-    function refreshMultiplierStyles() {
-      return getJson(API + '/catalog')
-        .then((data) => installMultiplierStyles(data && data.models))
-        .catch(() => { /* 拿不到目录就保持现有规则 */ });
+    /** 拉一次目录里的倍率；同时只发一个请求，失败就沿用上一份缓存。 */
+    function refreshMultipliers() {
+      if (multiplierLoading) return;
+      multiplierLoading = true;
+      getJson(API + '/catalog')
+        .then((data) => publishMultipliers(data && data.models))
+        .catch(() => { /* 拿不到就沿用上一份缓存 */ })
+        .finally(() => { multiplierLoading = false; });
+    }
+
+    function multiplierOf(providerId, modelId) {
+      if (providerId !== 'wb-work' || typeof modelId !== 'string') return null;
+      const value = MULTIPLIERS.get(modelId);
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    }
+
+    function useMultiplier(providerId, modelId) {
+      return React.useSyncExternalStore(
+        subscribeMultipliers,
+        () => multiplierOf(providerId, modelId),
+      );
+    }
+
+    /** 模型行标签：弹窗里显示「名字 ……… 0.65x」，其它位置保持纯名字。 */
+    function ModelNameLabel(props) {
+      const provider = props && props.provider;
+      const model = props && props.model;
+      const placement = props && props.placement;
+      const providerId = provider && provider.id;
+      const modelId = model && model.id;
+      const name = model && typeof model.name === 'string' ? model.name : '';
+      const multiplier = useMultiplier(providerId, modelId);
+      if (placement !== 'option' || multiplier === null) return name;
+      return h('span', {
+        style: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', minWidth: 0 },
+      },
+        h('span', {
+          style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        }, name),
+        h('span', {
+          style: { marginLeft: 'auto', flex: '0 0 auto', color: T.dim, fontSize: 11, lineHeight: 1 },
+        }, `${multiplier.toFixed(2)}x`));
     }
 
     async function streamSend(body, onEvent, signal) {
@@ -450,7 +484,7 @@ window.__ModuleLoader__.load({
           const data = await getJson(API + '/models' + (force ? '?force=1' : ''));
           if (Array.isArray(data.models)) setModels(data.models);
           else if (!data.ok) setError(data.reason || '读取模型失败');
-          refreshMultiplierStyles();
+          refreshMultipliers();
         } catch (failure) {
           setError(`读取模型失败：${String((failure && failure.message) || failure)}`);
         } finally {
@@ -1701,8 +1735,15 @@ window.__ModuleLoader__.load({
           const data = JSON.parse(xhr.responseText);
           if (data && typeof data.sidebarName === 'string' && data.sidebarName !== '') panelLabel = data.sidebarName;
         } catch { /* 拿不到就沿用默认名 */ }
-        // 模型选择器里的倍率由 CSS 追加，先按当前目录装一次。
-        refreshMultiplierStyles();
+        // 模型选择器里的倍率来自 /catalog：先拉一次，之后每 5 分钟刷新（时段折扣会变）。
+        ctx.effect(() => {
+          refreshMultipliers();
+          const timer = setInterval(() => refreshMultipliers(), 5 * 60 * 1000);
+          return () => { clearInterval(timer); };
+        });
+        // 模型行标签：名字 + 行尾右对齐倍率（弹窗里的 placement === 'option'）。
+        ctx.effect(() => ctx.slots.inject('conversation.input.model.label', () =>
+          ctx.slots.register({ name: 'conversation.input.model.label' }, ModelNameLabel)));
         ctx.effect(() => ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
           name: 'conversation.composer.dock',
           id: 'dhs-wb-work-credits',

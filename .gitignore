@@ -1,0 +1,31 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+.yarn-error.log*
+
+# DSH / local state
+.dsh/
+settings.json
+*.zstd
+*.zstd.bak
+*.zstd.single
+*.bak
+
+# Secrets and environment
+.env
+.env.*
+*.pem
+*.key
+
+# Build and test artifacts
+dist/
+coverage/
+logs/
+.tmp/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
