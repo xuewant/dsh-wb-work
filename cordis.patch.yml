@@ -1,0 +1,4 @@
+- insert:
+    - id: dhs-wb-work
+      name: dhs-wb-work
+      config: {}

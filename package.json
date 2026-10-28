@@ -1,0 +1,58 @@
+{
+  "name": "dhs-wb-work",
+  "version": "2.0.2",
+  "type": "module",
+  "description": "WorkBuddy 工作台与模型提供方：侧边栏面板操作 WorkBuddy，并把它作为 DSH 的模型提供方（令牌 / API Key、积分倍率与余额）。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "workbuddy",
+    "plugin",
+    "llm-provider"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "dhs-wb-work contributors"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_NAME/dhs-wb-work.git"
+  },
+  "homepage": "https://github.com/YOUR_NAME/dhs-wb-work#readme",
+  "bugs": {
+    "url": "https://github.com/YOUR_NAME/dhs-wb-work/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "provider.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

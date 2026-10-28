@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WB Workbench",
+    "description": "Operate WorkBuddy from DSH (conversations, models, messages) and use it as a model provider (token or API key, credit multiplier and balance)."
+  }
+}
