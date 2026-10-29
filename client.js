@@ -10,7 +10,12 @@ window.__ModuleLoader__.load({
   id: 'dhs-wb-work',
   factory(require) {
     const React = require('react');
+    const ReactDOM = require('react-dom');
     const h = React.createElement;
+    /** 把弹窗挂到 document.body，避免被侧边栏容器的 overflow / transform 裁掉。 */
+    const portal = (node) => (ReactDOM && typeof ReactDOM.createPortal === 'function' && typeof document !== 'undefined'
+      ? ReactDOM.createPortal(node, document.body)
+      : node);
 
     const PANEL_ID = 'dhs-wb-work:workbench';
     const API = '/dhs-wb-work';
@@ -1217,7 +1222,6 @@ window.__ModuleLoader__.load({
             h(PressButton, {
               title: '设置',
               onClick: () => { setTab('general'); setModelTab('token'); setSettingsOpen(true); },
-              disabled: busy,
               style: {
                 height: 30,
                 display: 'inline-flex',
@@ -1229,8 +1233,7 @@ window.__ModuleLoader__.load({
                 background: 'transparent',
                 color: T.text,
                 font: `12px ${FONT}`,
-                cursor: busy ? 'not-allowed' : 'pointer',
-                opacity: busy ? 0.5 : 1,
+                cursor: 'pointer',
                 whiteSpace: 'nowrap',
               },
             },
@@ -1362,7 +1365,7 @@ window.__ModuleLoader__.load({
 
         /* settings modal */
         settingsOpen
-          ? h('div', {
+          ? portal(h('div', {
             style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
             onClick: (event) => { if (event.target === event.currentTarget) setSettingsOpen(false); },
           },
@@ -1670,7 +1673,7 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-          )
+          ))
           : null,
 
       );
