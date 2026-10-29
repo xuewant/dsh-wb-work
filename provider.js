@@ -238,6 +238,33 @@ function postChat (body, credential, signal) {
 /** 兜底系统提示：任何品牌/指纹都不含，用于 11128 重试。 */
 const NEUTRAL_SYSTEM = 'You are CodeBuddy, an AI coding assistant. Follow the user request, use the provided tools when helpful, and answer in the user\'s language.'
 
+/**
+ * 上游的账号级风控文案。命中后继续重试只会加重风控，所以按不可重试的
+ * ACCOUNT_BLOCKED 上报，并在本地冷却一段时间内直接拒绝，不再发请求。
+ */
+const ACCOUNT_BLOCKED_RE = /异常行为|限制使用|已被限制|封禁|风控|risk control|restricted|banned|suspend/i
+const ACCOUNT_COOLDOWN_MS = 5 * 60 * 1000
+const blockedAccounts = new Map()
+
+/** 只用于本地冷却表，不参与日志；避免把令牌原文当 key。 */
+function accountKey (credential) {
+  const text = String(credential ?? '')
+  let hash = 5381
+  for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) + hash + text.charCodeAt(index)) >>> 0
+  return `${text.length}:${hash}`
+}
+
+function failureCode (status, payload, message) {
+  const upstream = String(payload?.code ?? payload?.error?.code ?? '')
+  if (upstream === '11128' || upstream === '11-128') return 'CHANNEL_BLOCKED'
+  // 11140 = 账号级风控；文案也可能变，所以两种都认。
+  if (upstream === '11140') return 'ACCOUNT_BLOCKED'
+  if (ACCOUNT_BLOCKED_RE.test(String(message ?? '')) || ACCOUNT_BLOCKED_RE.test(String(payload?.msg ?? ''))) return 'ACCOUNT_BLOCKED'
+  if (status === 429) return 'RATE_LIMIT'
+  if (status >= 500) return 'SERVER'
+  return 'REQUEST_INVALID'
+}
+
 function withNeutralSystem (messages) {
   return [
     { role: 'system', content: NEUTRAL_SYSTEM },
@@ -265,6 +292,23 @@ export async function * streamWorkbuddy (options, auth) {
   const credential = String(auth?.apiKey || auth?.token || '').trim()
   if (credential === '') {
     yield { type: 'finish', reason: { kind: 'error', failure: { message: 'WorkBuddy 未配置 API Key 或令牌', code: 'MISSING_CREDENTIAL' } } }
+    return
+  }
+
+  // 账号刚被风控过：冷却期内不再发请求，既省得用户干等，也避免继续触发风控。
+  const blockedUntil = blockedAccounts.get(accountKey(credential))
+  if (blockedUntil !== undefined && Date.now() < blockedUntil) {
+    const minutes = Math.max(1, Math.ceil((blockedUntil - Date.now()) / 60000))
+    yield {
+      type: 'finish',
+      reason: {
+        kind: 'error',
+        failure: {
+          message: `WorkBuddy 账号被上游限制使用，本插件已暂停调用约 ${minutes} 分钟（可在设置里切换账号，或改用 API Key）`,
+          code: 'ACCOUNT_BLOCKED',
+        },
+      },
+    }
     return
   }
 
@@ -343,15 +387,15 @@ export async function * streamWorkbuddy (options, auth) {
   if (!response.ok || !response.body) {
     let raw = ''
     try { raw = await response.text() } catch { /* ignore */ }
+    let parsed = null
+    try { parsed = JSON.parse(raw) } catch { parsed = null }
     let message = `WorkBuddy 返回 HTTP ${response.status}`
-    try {
-      const parsed = JSON.parse(raw)
-      message = parsed?.displayMsg?.zh || parsed?.msg || parsed?.error?.message || message
-    } catch {
-      if (raw) message = `${message}: ${raw.slice(0, 500)}`
-    }
+    if (parsed) message = parsed?.displayMsg?.zh || parsed?.msg || parsed?.error?.message || message
+    else if (raw) message = `${message}: ${raw.slice(0, 500)}`
+    const code = failureCode(response.status, parsed, message)
+    if (code === 'ACCOUNT_BLOCKED') blockedAccounts.set(accountKey(credential), Date.now() + ACCOUNT_COOLDOWN_MS)
     yield { type: 'usage', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 } }
-    yield { type: 'finish', reason: { kind: 'error', failure: { message, code: response.status === 429 ? 'RATE_LIMIT' : 'SERVER' } } }
+    yield { type: 'finish', reason: { kind: 'error', failure: { message, code } } }
     return
   }
 
